@@ -1,0 +1,57 @@
+services:
+  api:
+    build:
+      context: ../apps/api
+    environment:
+      DATABASE_URL: postgresql+psycopg://titanic:titanic@postgres:5432/titanic
+      REDIS_URL: redis://redis:6379/0
+      NEO4J_URI: bolt://neo4j:7687
+      NEO4J_USER: neo4j
+      NEO4J_PASSWORD: change_me
+      QDRANT_URL: http://qdrant:6333
+      RECOVERY_DRY_RUN: "true"
+    ports:
+      - "8000:8000"
+    depends_on:
+      - postgres
+      - redis
+      - neo4j
+      - qdrant
+
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: titanic
+      POSTGRES_PASSWORD: titanic
+      POSTGRES_DB: titanic
+    ports:
+      - "5432:5432"
+    volumes:
+      - titanic_postgres:/var/lib/postgresql/data
+
+  redis:
+    image: redis:7
+    ports:
+      - "6379:6379"
+
+  neo4j:
+    image: neo4j:5
+    environment:
+      NEO4J_AUTH: neo4j/change_me
+    ports:
+      - "7474:7474"
+      - "7687:7687"
+    volumes:
+      - titanic_neo4j:/data
+
+  qdrant:
+    image: qdrant/qdrant:v1.12.4
+    ports:
+      - "6333:6333"
+    volumes:
+      - titanic_qdrant:/qdrant/storage
+
+volumes:
+  titanic_postgres:
+  titanic_neo4j:
+  titanic_qdrant:
