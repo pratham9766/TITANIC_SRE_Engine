@@ -1,0 +1,17 @@
+.env
+.env.*
+!.env.example
+
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+node_modules/
+npm-debug.log*
+
+*.log
+uvicorn-*.log
+dist/
+build/

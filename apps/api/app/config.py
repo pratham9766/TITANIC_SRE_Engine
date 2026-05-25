@@ -8,6 +8,7 @@ class Settings(BaseSettings):
     openai_model: str = "gpt-4.1"
     jwt_secret: str = "change_me_for_local_demo"
     jwt_issuer: str = "titanic-api"
+    cors_origins: str = "http://localhost:4173,http://127.0.0.1:4173,http://localhost:5173,http://127.0.0.1:5173"
     database_url: str = "postgresql+psycopg://titanic:titanic@localhost:5432/titanic"
     redis_url: str = "redis://localhost:6379/0"
     neo4j_uri: str = "bolt://localhost:7687"
@@ -28,3 +29,7 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
+
+
+def cors_origin_list() -> list[str]:
+    return [origin.strip() for origin in settings.cors_origins.split(",") if origin.strip()]

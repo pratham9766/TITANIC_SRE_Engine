@@ -1,0 +1,17 @@
+{
+  "name": "titanic-api",
+  "version": "0.1.0",
+  "private": true,
+  "type": "commonjs",
+  "scripts": {
+    "postinstall": "python -m pip install -r requirements.txt",
+    "start": "node railway-start.js",
+    "dev": "python -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8000",
+    "test": "python -m pytest"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2"
+  }
+}
