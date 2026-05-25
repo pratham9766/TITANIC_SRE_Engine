@@ -2,6 +2,11 @@
 
 TITANIC is an AI-native reliability operating system prototype for autonomous incident investigation, predictive reliability, infrastructure intelligence, and recovery workflows.
 
+## 🚀 Deployed Links
+
+- **Frontend Command Center**: [https://titanic-sre-engine.vercel.app/](https://titanic-sre-engine.vercel.app/)
+- **Backend API**: Deployed on Railway (fully configured with dynamic CORS to support the Vercel frontend command center)
+
 ## What Is Included
 
 - `apps/web` - runnable command center UI with incident RCA, service map, replay, chat, postmortem, and integration settings.
