@@ -12,7 +12,7 @@ import {
 } from "./data.js";
 
 const state = {
-  activeView: "overview",
+  activeView: "landing",
   selectedIncident: incidents[0],
   chat: [
     { role: "assistant", text: "TITANIC Sentinel online. Incident context loaded for checkout-service." },
@@ -22,6 +22,17 @@ const state = {
   replayStep: 3,
   autonomy: false,
   tick: 0,
+  simulation: {
+    running: false,
+    step: 0,
+    approved: false,
+    rcaRevealed: false,
+    approvalOpen: false,
+    postmortemReady: false,
+    playbackSpeed: 1,
+  },
+  reasoning: [],
+  typing: false,
   liveEvents: [
     "SSE standby: backend event stream will attach when FastAPI is running.",
     "Telemetry simulator active in local demo mode.",
@@ -29,6 +40,7 @@ const state = {
 };
 
 const navItems = [
+  ["landing", "Launch"],
   ["overview", "Overview"],
   ["incidents", "Incidents"],
   ["services", "Services"],
@@ -38,10 +50,123 @@ const navItems = [
   ["settings", "Settings"],
 ];
 
+const simulationSteps = [
+  {
+    label: "Calm infrastructure state",
+    headline: "All mission services nominal",
+    node: "web",
+    severity: "ok",
+    event: "Baseline learned: traffic, latency, and dependency graph are stable.",
+    agent: "[Sentinel Core] Watching golden signals across 7 services...",
+  },
+  {
+    label: "Deployment event triggered",
+    headline: "payment-service v2.4.1 deployed",
+    node: "payment",
+    severity: "warn",
+    event: "Deployment v2.4.1 detected in payment-service. Canary window opened.",
+    agent: "[Deployment Agent] Correlating release metadata with live latency...",
+  },
+  {
+    label: "Payment-service latency spike",
+    headline: "p95 latency crosses 2.8s",
+    node: "payment",
+    severity: "danger",
+    event: "Payment p95 latency spiked 340% inside 92 seconds.",
+    agent: "[Metrics Agent] Analyzing latency anomalies and retry pressure...",
+  },
+  {
+    label: "Redis saturation",
+    headline: "Redis saturation detected",
+    node: "auth",
+    severity: "danger",
+    event: "Redis p99 latency crossed 890ms. Cache eviction surged above baseline.",
+    agent: "[Topology Agent] Tracing auth token delays through Redis dependency paths...",
+  },
+  {
+    label: "Cascading service degradation",
+    headline: "Checkout, Auth, and Gateway degraded",
+    node: "checkout",
+    severity: "critical",
+    event: "Cascading degradation detected across checkout, auth, and gateway.",
+    agent: "[Blast Radius Agent] Modeling downstream impact and user-facing failure surface...",
+  },
+  {
+    label: "AI agents activate",
+    headline: "Multi-agent investigation activated",
+    node: "gateway",
+    severity: "warn",
+    event: "Chief SRE Agent activated autonomous incident investigation.",
+    agent: "[Chief SRE Agent] Delegating evidence collection to metrics, logs, topology, and deployment agents...",
+  },
+  {
+    label: "Root cause analysis generated",
+    headline: "Root cause identified",
+    node: "payment",
+    severity: "critical",
+    event: "RCA confidence reached 94%. Connection leak isolated in payment-service.",
+    agent: "[Chief SRE Agent] Generating root cause analysis with confidence-weighted evidence...",
+    revealRca: true,
+  },
+  {
+    label: "Blast radius visualized",
+    headline: "Blast radius projected",
+    node: "db",
+    severity: "critical",
+    event: "Blast radius: 12% active users, checkout conversion, auth refresh, payment authorization.",
+    agent: "[Topology Agent] Highlighting dependency chain: database -> payment -> checkout -> gateway...",
+  },
+  {
+    label: "Recovery suggested",
+    headline: "Safe recovery plan ready",
+    node: "payment",
+    severity: "warn",
+    event: "Recovery options ranked: scale RDS, restart payment pods, rollback deployment.",
+    agent: "[Recovery Agent] Preparing approval-gated dry-run recovery workflow...",
+    approval: true,
+  },
+  {
+    label: "Recovery executed",
+    headline: "Recovery workflow executing",
+    node: "payment",
+    severity: "warn",
+    event: "Recovery dry-run approved. Restarting payment pods and draining leaked connections.",
+    agent: "[Recovery Agent] Executing staged mitigation and validating SLO recovery...",
+  },
+  {
+    label: "Infrastructure stabilizes",
+    headline: "Golden signals returning to baseline",
+    node: "gateway",
+    severity: "ok",
+    event: "Error rate falling. Redis and checkout latency returning to normal.",
+    agent: "[Sentinel Core] Monitoring stabilization window and regression risk...",
+  },
+  {
+    label: "AI postmortem generated",
+    headline: "Executive postmortem ready",
+    node: "web",
+    severity: "ok",
+    event: "Postmortem generated with timeline, impact, root cause, and prevention items.",
+    agent: "[Postmortem Agent] Drafting executive summary, action items, and prevention guardrails...",
+    postmortem: true,
+  },
+];
+
+let simulationTimer = null;
+
 const $ = (selector) => document.querySelector(selector);
 
 function cls(...names) {
   return names.filter(Boolean).join(" ");
+}
+
+function escapeHtml(value) {
+  return String(value)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
 }
 
 function sparkline(points, tone = "ok") {
@@ -66,6 +191,9 @@ function badge(text, tone = "neutral") {
 function renderShell() {
   const app = $("#app");
   app.innerHTML = `
+    <div class="ambient-system" aria-hidden="true">
+      <span></span><span></span><span></span><span></span>
+    </div>
     <div class="shell">
       <aside class="sidebar">
         <div class="brand">
@@ -78,18 +206,19 @@ function renderShell() {
         <nav class="nav">${navItems.map(([id, label]) => `<button class="${cls("nav-item", state.activeView === id && "active")}" data-view="${id}">${label}</button>`).join("")}</nav>
         <div class="system-card">
           <div class="status-row"><span class="dot dot-ok"></span><strong>System Status</strong></div>
-          <p>All mission services connected</p>
+          <p>${state.simulation.running ? "Live simulation running" : "All mission services connected"}</p>
         </div>
         <div class="upgrade-card">
           <strong>Beyond monitoring <span>AI</span></strong>
           <p>Infrastructure that thinks for itself.</p>
-          <button data-view="settings">Configure</button>
+          <button id="sidebar-simulation">Start Simulation</button>
         </div>
       </aside>
       <main class="workspace">
         <header class="topbar">
           <div class="search">Search incidents, services, logs, metrics... <kbd>Ctrl K</kbd></div>
           <div class="top-actions">
+            <button class="primary-btn compact-action" id="top-simulation">${state.simulation.running ? "Simulation Live" : "Start Simulation"}</button>
             <button class="icon-btn" title="Alerts">AL</button>
             <button class="icon-btn" title="Theme">FX</button>
             <div class="profile"><span>AD</span><div><strong>Arjun Dev</strong><small>SRE Engineer</small></div></div>
@@ -98,6 +227,8 @@ function renderShell() {
         <div class="view" id="view"></div>
       </main>
     </div>
+    ${state.simulation.rcaRevealed ? renderRcaReveal() : ""}
+    ${state.simulation.approvalOpen ? renderApprovalModal() : ""}
   `;
   document.querySelectorAll("[data-view]").forEach((button) => {
     button.addEventListener("click", () => {
@@ -105,20 +236,23 @@ function renderShell() {
       render();
     });
   });
+  $("#sidebar-simulation")?.addEventListener("click", startSimulation);
+  $("#top-simulation")?.addEventListener("click", startSimulation);
 }
 
 function renderHeroIncident() {
   const incident = state.selectedIncident;
+  const stage = getSimulationStage();
   return `
-    <section class="incident-hero">
+    <section class="incident-hero stage-${stage.severity}">
       <div class="severity">${incident.severity}</div>
       <div>
         <h1>${incident.title}</h1>
-        <p>${incident.id} <span></span> ${incident.startedAt} <span></span> ${incident.duration}</p>
+        <p>${incident.id} <span></span> ${stage.headline} <span></span> ${incident.duration}</p>
       </div>
       <div class="hero-actions">
         ${badge(incident.status, "danger")}
-        <button class="primary-btn" id="new-incident">New Incident</button>
+        <button class="primary-btn" id="hero-simulation">${state.simulation.running ? "Simulation Running" : "Start Simulation"}</button>
       </div>
       <div class="command-strip">
         <span>AI Runtime Active</span>
@@ -130,10 +264,41 @@ function renderHeroIncident() {
   `;
 }
 
+function renderLanding() {
+  return `
+    <section class="landing-hero">
+      <div class="landing-orbit" aria-hidden="true">
+        <span></span><span></span><span></span>
+      </div>
+      <div class="landing-copy">
+        <div class="eyebrow">Autonomous Infrastructure Intelligence</div>
+        <h1>TITANIC</h1>
+        <p>Infrastructure that thinks for itself.</p>
+        <div class="landing-actions">
+          <button class="primary-btn launch-btn" id="landing-simulation">Start Live Simulation</button>
+          <button class="ghost-btn" data-view="overview">Enter Command Center</button>
+        </div>
+      </div>
+      <div class="landing-console">
+        <div class="console-bar"><span></span><span></span><span></span><strong>AI SRE CORE</strong></div>
+        ${renderServiceMap()}
+      </div>
+    </section>
+    <section class="landing-sections">
+      <article><strong>AI Agents</strong><span>Metrics, topology, deployment, logs, recovery, and Chief SRE synthesis.</span></article>
+      <article><strong>Replay System</strong><span>Cinematic outage playback with synchronized graph propagation.</span></article>
+      <article><strong>Autonomous Recovery</strong><span>Approval-gated mitigation plans with business impact context.</span></article>
+      <article><strong>Memory Layer</strong><span>Neo4j and Qdrant powered incident memory and infrastructure intelligence.</span></article>
+    </section>
+  `;
+}
+
 function renderOverview() {
   return `
     ${renderHeroIncident()}
     <section class="grid primary-grid">
+      ${renderSimulationDirector()}
+      ${renderExecutiveSummary()}
       ${renderRootCause()}
       ${renderTimeline()}
       ${renderServiceMap()}
@@ -149,12 +314,57 @@ function renderOverview() {
   `;
 }
 
+function renderSimulationDirector() {
+  const stage = getSimulationStage();
+  const progress = ((state.simulation.step + 1) / simulationSteps.length) * 100;
+  return `
+    <article class="panel simulation-director span-2 stage-${stage.severity}">
+      <div class="panel-title"><h2>Live Incident Simulation</h2><span>${state.simulation.running ? "Cinematic sequence live" : "Ready"}</span></div>
+      <div class="director-grid">
+        <div>
+          <p class="eyebrow">Current Beat</p>
+          <h3>${stage.label}</h3>
+          <p>${stage.event}</p>
+          <div class="simulation-progress"><span style="width:${progress}%"></span></div>
+        </div>
+        <div class="director-actions">
+          <button class="primary-btn" id="director-simulation">${state.simulation.running ? "Restart Simulation" : "Start Simulation"}</button>
+          <button class="ghost-btn" id="step-simulation">Advance Beat</button>
+        </div>
+      </div>
+    </article>
+  `;
+}
+
+function renderExecutiveSummary() {
+  const stage = getSimulationStage();
+  const multiplier = Math.min(state.simulation.step + 1, 9);
+  const stabilized = stage.severity === "ok" && state.simulation.step > 8;
+  const cards = [
+    ["Affected Users", stabilized ? "1.8%" : `${Math.min(12, multiplier * 1.6).toFixed(1)}%`, "User impact"],
+    ["Revenue Impact", stabilized ? "$8,200" : `$${(1200 + multiplier * 780).toLocaleString()}`, "Estimated"],
+    ["Recovery Time", state.simulation.approved ? "6m 32s" : "Pending", "Projected"],
+    ["SLA Impact", stabilized ? "Recovered" : "99.91%", "Current"],
+  ];
+  return `
+    <article class="panel executive-summary span-2">
+      <div class="panel-title"><h2>Executive Summary</h2><span>Business impact</span></div>
+      <div class="impact-grid">${cards.map(([label, value, hint]) => `
+        <div class="impact-card">
+          <span>${hint}</span>
+          <strong>${value}</strong>
+          <small>${label}</small>
+        </div>`).join("")}</div>
+    </article>
+  `;
+}
+
 function renderLiveStream() {
   return `
     <article class="panel live-stream">
-      <div class="panel-title"><h2>Realtime Event Stream</h2><span>${state.streamConnected ? "Connected" : "Demo fallback"}</span></div>
-      <div class="event-feed">
-        ${state.liveEvents.slice(-6).map((event) => `<p>${event}</p>`).join("")}
+      <div class="panel-title"><h2>Realtime Event Stream</h2><span id="stream-status">${state.streamConnected ? "Connected" : "Demo fallback"}</span></div>
+      <div class="event-feed" id="event-feed">
+        ${state.liveEvents.slice(-6).map((event) => `<p>${escapeHtml(event)}</p>`).join("")}
       </div>
     </article>
   `;
@@ -204,21 +414,29 @@ function renderTimeline() {
 }
 
 function renderServiceMap() {
-  const lines = services.flatMap((service) => service.deps.map((dep) => {
-    const target = services.find((item) => item.id === dep);
-    return `<line x1="${service.x}" y1="${service.y}" x2="${target.x}" y2="${target.y}" class="edge edge-${target.risk}"></line>`;
+  const stage = getSimulationStage();
+  const visualServices = getVisualServices();
+  const lines = visualServices.flatMap((service) => service.deps.map((dep) => {
+    const target = visualServices.find((item) => item.id === dep);
+    return `<g>
+      <line x1="${service.x}" y1="${service.y}" x2="${target.x}" y2="${target.y}" class="edge edge-${target.risk} ${stage.node === service.id || stage.node === target.id ? "edge-active" : ""}"></line>
+      <circle class="edge-particle" r="0.8">
+        <animateMotion dur="${service.risk === "down" || target.risk === "down" ? "1.8s" : "3.4s"}" repeatCount="indefinite" path="M ${service.x} ${service.y} L ${target.x} ${target.y}" />
+      </circle>
+    </g>`;
   })).join("");
-  const nodes = services.map((service) => `
-    <button class="node node-${service.risk}" style="left:${service.x}%; top:${service.y}%;" title="${service.name}">
+  const nodes = visualServices.map((service) => `
+    <button class="node node-${service.risk} ${stage.node === service.id ? "node-focus" : ""}" style="left:${service.x}%; top:${service.y}%;" title="${service.name}">
+      <span class="node-halo"></span>
       <strong>${service.name}</strong><small>${service.health}%</small>
     </button>`).join("");
   return `
     <article class="panel service-map cinematic-map">
-      <div class="panel-title"><h2>Service Map</h2><span>Live</span></div>
+      <div class="panel-title"><h2>Animated Service Topology</h2><span>${stage.label}</span></div>
       <div class="map-canvas">
         <svg viewBox="0 0 100 100" preserveAspectRatio="none">${lines}</svg>
         ${nodes}
-        <div class="blast-radius radius-${replayEvents[state.replayStep % replayEvents.length].node}"></div>
+        <div class="blast-radius radius-${stage.node}"></div>
       </div>
       <div class="legend">
         <span><i class="dot dot-ok"></i>Healthy</span><span><i class="dot dot-warn"></i>Degraded</span><span><i class="dot dot-danger"></i>Down</span>
@@ -228,19 +446,26 @@ function renderServiceMap() {
 }
 
 function renderAgentStream() {
+  const stream = state.reasoning.length
+    ? state.reasoning
+    : agents.map((agent) => `${agent.name}: ${agent.thought}`);
   return `
     <article class="panel agent-stream">
-      <div class="panel-title"><h2>Multi-Agent Thinking Stream</h2><span>Autonomous</span></div>
+      <div class="panel-title"><h2>Realtime AI Reasoning Stream</h2><span>${state.typing ? "Thinking" : "Autonomous"}</span></div>
       <div class="agent-stream-list">
-        ${agents.map((agent, index) => `
-          <div class="thinking-card" style="--delay:${index * 90}ms">
+        ${stream.map((line, index) => {
+          const [name, ...message] = line.split(":");
+          const agent = agents[index % agents.length];
+          return `
+          <div class="thinking-card ${index === stream.length - 1 && state.typing ? "typing" : ""}" style="--delay:${index * 90}ms">
             <div class="thinking-head">
-              <strong>${agent.name}</strong>
+              <strong>${name.replace(/\[|\]/g, "")}</strong>
               ${badge(agent.status, agent.status === "Complete" ? "ok" : agent.status === "Running" ? "warn" : "neutral")}
             </div>
-            <p>${agent.thought}</p>
+            <p>${message.join(":").trim() || agent.thought}</p>
             <div class="confidence-line"><span style="width:${agent.confidence}%"></span></div>
-          </div>`).join("")}
+          </div>`;
+        }).join("")}
       </div>
     </article>
   `;
@@ -311,7 +536,12 @@ function renderChat() {
   return `
     <article class="panel chat-panel">
       <div class="panel-title"><h2>AI Assistant Chat</h2><button class="icon-btn compact" title="Tune context">CT</button></div>
-      <div class="messages">${state.chat.map((msg) => `<div class="message ${msg.role}">${msg.text}</div>`).join("")}</div>
+      <div class="suggestion-chips">
+        <button data-suggest="What is the root cause?">Root cause</button>
+        <button data-suggest="What is the blast radius?">Blast radius</button>
+        <button data-suggest="Generate recovery plan">Recovery plan</button>
+      </div>
+      <div class="messages">${state.chat.map((msg) => `<div class="message ${msg.role}"><span>${msg.role === "assistant" ? "AI" : "ME"}</span>${msg.text}</div>`).join("")}${state.typing ? `<div class="message assistant typing"><span>AI</span>Thinking across topology, telemetry, and memory...</div>` : ""}</div>
       <form id="chat-form" class="chat-input">
         <input name="query" autocomplete="off" placeholder="Ask anything about this incident..." />
         <button type="submit">Send</button>
@@ -349,18 +579,23 @@ function renderRiskRadar() {
 
 function renderIncidentsView() {
   const replay = replayEvents[state.replayStep % replayEvents.length];
+  const stage = getSimulationStage();
   return `
     ${renderHeroIncident()}
     <section class="grid detail-grid">
       ${renderScenarioSwitcher()}
       ${renderTimeline()}
       <article class="panel replay">
-        <div class="panel-title"><h2>AI Incident Replay</h2><span>Step ${state.replayStep + 1}/${timeline.length}</span></div>
-        <div class="replay-stage replay-${replay.node}">
+        <div class="panel-title"><h2>Cinematic Incident Replay</h2><span>Step ${state.replayStep + 1}/${timeline.length}</span></div>
+        <div class="replay-stage replay-${replay.node} stage-${stage.severity}">
           <div class="shockwave"></div>
           <strong>${replay.label}: ${timeline[state.replayStep].title}</strong>
           <p>${replay.detail}</p>
           <meter min="0" max="100" value="${replay.intensity}"></meter>
+        </div>
+        <div class="replay-controls">
+          <button class="ghost-btn" id="replay-play">Play</button>
+          <label>Speed <select id="replay-speed"><option ${state.simulation.playbackSpeed === 0.75 ? "selected" : ""}>0.75</option><option ${state.simulation.playbackSpeed === 1 ? "selected" : ""}>1</option><option ${state.simulation.playbackSpeed === 1.5 ? "selected" : ""}>1.5</option><option ${state.simulation.playbackSpeed === 2 ? "selected" : ""}>2</option></select>x</label>
         </div>
         <input id="replay-slider" type="range" min="0" max="${timeline.length - 1}" value="${state.replayStep}" />
       </article>
@@ -454,7 +689,124 @@ function integrationCopy(name) {
   return copy[name];
 }
 
+function getSimulationStage() {
+  return simulationSteps[state.simulation.step] || simulationSteps[0];
+}
+
+function getVisualServices() {
+  const step = state.simulation.step;
+  if (!state.simulation.running && step === 0) return services;
+  const stressed = new Map();
+  if (step >= 1) stressed.set("payment", { risk: "degraded", health: 68.4 });
+  if (step >= 2) stressed.set("payment", { risk: "down", health: 31.2 });
+  if (step >= 3) stressed.set("auth", { risk: "degraded", health: 46.9 });
+  if (step >= 4) {
+    stressed.set("checkout", { risk: "down", health: 8.8 });
+    stressed.set("gateway", { risk: "degraded", health: 62.1 });
+    stressed.set("db", { risk: "down", health: 2.4 });
+  }
+  if (step >= 10) {
+    stressed.set("payment", { risk: "healthy", health: 91.6 });
+    stressed.set("checkout", { risk: "degraded", health: 76.8 });
+    stressed.set("auth", { risk: "healthy", health: 93.2 });
+    stressed.set("gateway", { risk: "healthy", health: 96.4 });
+    stressed.set("db", { risk: "degraded", health: 82.5 });
+  }
+  if (step >= 11) {
+    stressed.set("checkout", { risk: "healthy", health: 97.2 });
+    stressed.set("db", { risk: "healthy", health: 94.7 });
+  }
+  return services.map((service) => ({ ...service, ...(stressed.get(service.id) || {}) }));
+}
+
+function renderRcaReveal() {
+  return `
+    <div class="cinematic-overlay">
+      <section class="rca-reveal">
+        <button class="modal-close" id="close-rca">Close</button>
+        <div class="confidence-ring"><strong>94%</strong><span>confidence</span></div>
+        <div>
+          <p class="eyebrow">Root Cause Identified</p>
+          <h2>payment-service v2.4.1 introduced a database connection leak.</h2>
+          <p>The leak exhausted RDS connections, saturated Redis-dependent auth validation, and cascaded into checkout failures.</p>
+          <div class="impact-grid compact">
+            <div class="impact-card"><span>Blast radius</span><strong>4 services</strong><small>Payment, checkout, auth, gateway</small></div>
+            <div class="impact-card"><span>User impact</span><strong>12%</strong><small>Active checkout traffic</small></div>
+            <div class="impact-card"><span>Suggested action</span><strong>Restart + scale</strong><small>Approval gated</small></div>
+          </div>
+        </div>
+      </section>
+    </div>
+  `;
+}
+
+function renderApprovalModal() {
+  return `
+    <div class="cinematic-overlay">
+      <section class="approval-modal">
+        <p class="eyebrow">Human Approval Required</p>
+        <h2>Execute recovery workflow?</h2>
+        <p>TITANIC will run a dry-run mitigation: scale RDS capacity, restart payment-service pods, and validate SLO recovery.</p>
+        <div class="modal-actions">
+          <button class="ghost-btn" id="reject-recovery">Keep monitoring</button>
+          <button class="primary-btn" id="approve-recovery">Approve Recovery</button>
+        </div>
+      </section>
+    </div>
+  `;
+}
+
+function startSimulation() {
+  clearInterval(simulationTimer);
+  state.activeView = "overview";
+  state.simulation = {
+    running: true,
+    step: 0,
+    approved: false,
+    rcaRevealed: false,
+    approvalOpen: false,
+    postmortemReady: false,
+    playbackSpeed: state.simulation.playbackSpeed || 1,
+  };
+  state.reasoning = [];
+  state.liveEvents.push("Live simulation started: calm baseline established.");
+  advanceSimulation(true);
+  simulationTimer = setInterval(() => advanceSimulation(), 2800 / state.simulation.playbackSpeed);
+  render();
+}
+
+function advanceSimulation(initial = false) {
+  const stage = getSimulationStage();
+  if (!initial) {
+    if (stage.approval && !state.simulation.approved) {
+      state.simulation.approvalOpen = true;
+      clearInterval(simulationTimer);
+      render();
+      return;
+    }
+    if (state.simulation.step < simulationSteps.length - 1) {
+      state.simulation.step += 1;
+    } else {
+      clearInterval(simulationTimer);
+      state.simulation.running = false;
+    }
+  }
+  const nextStage = getSimulationStage();
+  state.liveEvents.push(nextStage.event);
+  state.reasoning.push(nextStage.agent);
+  state.typing = true;
+  if (nextStage.revealRca) state.simulation.rcaRevealed = true;
+  if (nextStage.postmortem) state.simulation.postmortemReady = true;
+  setTimeout(() => {
+    state.typing = false;
+    const typingNode = $(".message.typing");
+    if (typingNode) render();
+  }, 900);
+  render();
+}
+
 function renderActiveView() {
+  if (state.activeView === "landing") return renderLanding();
   if (state.activeView === "incidents") return renderIncidentsView();
   if (state.activeView === "services") return renderServicesView();
   if (state.activeView === "radar") return `<section class="page-title"><h1>Predictive Reliability</h1><p>Failure windows, deployment confidence, and service DNA anomalies.</p></section><section class="grid detail-grid">${renderAnomalyRadar()}${renderRiskRadar()}${renderMetrics()}${renderServiceMap()}${renderRecommendations()}</section>`;
@@ -465,6 +817,28 @@ function renderActiveView() {
 }
 
 function bindInteractions() {
+  $("#landing-simulation")?.addEventListener("click", startSimulation);
+  $("#hero-simulation")?.addEventListener("click", startSimulation);
+  $("#director-simulation")?.addEventListener("click", startSimulation);
+  $("#step-simulation")?.addEventListener("click", () => advanceSimulation());
+  $("#close-rca")?.addEventListener("click", () => {
+    state.simulation.rcaRevealed = false;
+    render();
+  });
+  $("#reject-recovery")?.addEventListener("click", () => {
+    state.simulation.approvalOpen = false;
+    state.liveEvents.push("Human kept TITANIC in recommendation-only monitoring mode.");
+    render();
+  });
+  $("#approve-recovery")?.addEventListener("click", () => {
+    state.simulation.approvalOpen = false;
+    state.simulation.approved = true;
+    state.autonomy = true;
+    state.chat.push({ role: "assistant", text: "Recovery approved. Executing dry-run mitigation and validating service stabilization." });
+    advanceSimulation();
+    simulationTimer = setInterval(() => advanceSimulation(), 2800 / state.simulation.playbackSpeed);
+  });
+
   const chatForm = $("#chat-form");
   if (chatForm) {
     chatForm.addEventListener("submit", (event) => {
@@ -472,11 +846,29 @@ function bindInteractions() {
       const query = new FormData(chatForm).get("query")?.toString().trim();
       if (!query) return;
       state.chat.push({ role: "user", text: query });
-      state.chat.push({ role: "assistant", text: getAssistantReply(query) });
+      state.typing = true;
       chatForm.reset();
       render();
+      setTimeout(() => {
+        state.chat.push({ role: "assistant", text: getAssistantReply(query) });
+        state.typing = false;
+        render();
+      }, 760);
     });
   }
+
+  document.querySelectorAll("[data-suggest]").forEach((button) => {
+    button.addEventListener("click", () => {
+      state.chat.push({ role: "user", text: button.dataset.suggest });
+      state.typing = true;
+      render();
+      setTimeout(() => {
+        state.chat.push({ role: "assistant", text: getAssistantReply(button.dataset.suggest) });
+        state.typing = false;
+        render();
+      }, 760);
+    });
+  });
 
   const execute = $("#execute-fix");
   if (execute) {
@@ -501,6 +893,16 @@ function bindInteractions() {
       render();
     });
   }
+
+  $("#replay-play")?.addEventListener("click", () => {
+    state.activeView = "overview";
+    startSimulation();
+  });
+
+  $("#replay-speed")?.addEventListener("change", (event) => {
+    state.simulation.playbackSpeed = Number(event.target.value);
+    render();
+  });
 
   document.querySelectorAll("[data-incident]").forEach((button) => {
     button.addEventListener("click", () => {
@@ -527,13 +929,23 @@ function render() {
 
 render();
 
+function updateLiveEventFeed() {
+  const feed = $("#event-feed");
+  if (feed) {
+    feed.innerHTML = state.liveEvents.slice(-6).map((event) => `<p>${escapeHtml(event)}</p>`).join("");
+    feed.scrollTop = feed.scrollHeight;
+  }
+  const status = $("#stream-status");
+  if (status) status.textContent = state.streamConnected ? "Connected" : "Demo fallback";
+}
+
 function connectEventStream() {
   if (!window.EventSource) return;
   const source = new EventSource(`http://127.0.0.1:8000/events/incident/${state.selectedIncident.id}`);
   source.onopen = () => {
     state.streamConnected = true;
     state.liveEvents.push("Connected to TITANIC realtime backend stream.");
-    render();
+    updateLiveEventFeed();
   };
   source.onmessage = (event) => {
     try {
@@ -546,14 +958,16 @@ function connectEventStream() {
       } else if (payload.message) {
         state.liveEvents.push(payload.message);
       }
-      render();
+      updateLiveEventFeed();
     } catch {
       state.liveEvents.push(event.data);
+      updateLiveEventFeed();
     }
   };
   source.onerror = () => {
     state.streamConnected = false;
     source.close();
+    updateLiveEventFeed();
   };
 }
 
